@@ -1,120 +1,89 @@
 from fastapi import FastAPI
-import mysql.connector
+from typing import List
+from models import get_menu_items, search_menu, create_order, add_item, track_order, save_customer_info, get_customer_info
+from pydantic import BaseModel
 
 app = FastAPI()
 
-# DATABASE CONNECTION
-db = mysql.connector.connect(
-    host="localhost",
-    user="root",
-    password="YOUR_PASSWORD",
-    database="orderly"
-)
+# -----------------------------
+# SCHEMAS
+# -----------------------------
+class CustomerInfo(BaseModel):
+    name: str
+    allergies: List[str] = []
+    preferences: List[str] = []
 
-cursor = db.cursor(dictionary=True)
+class OrderItem(BaseModel):
+    item_name: str
+    quantity: int
 
+class BillItem(BaseModel):
+    item_name: str
+    quantity: int
+    price: float
 
+class Bill(BaseModel):
+    customer: CustomerInfo
+    items: List[BillItem]
+    total: float
+
+# -----------------------------
 # TEST ROUTE
+# -----------------------------
 @app.get("/")
 def home():
     return {"message": "Orderly Backend Running"}
 
-
-# GET FULL MENU
+# -----------------------------
+# MENU ROUTES
+# -----------------------------
 @app.get("/menu")
-def get_menu():
-    cursor.execute("SELECT * FROM menu_items WHERE is_available = 1")
-    menu = cursor.fetchall()
+def menu():
+    menu = get_menu_items()
     return {"menu": menu}
 
-
-# SEARCH MENU ITEM
 @app.get("/menu/search")
-def search_menu(name: str):
-    query = "SELECT * FROM menu_items WHERE LOWER(name) LIKE LOWER(%s)"
-    cursor.execute(query, ("%" + name + "%",))
-    results = cursor.fetchall()
+def menu_search(name: str):
+    results = search_menu(name)
     return {"results": results}
 
-
-# CREATE ORDER
+# -----------------------------
+# ORDER ROUTES
+# -----------------------------
 @app.post("/order/create")
-def create_order(user_id: int):
-    query = "INSERT INTO orders (user_id,status,total_price) VALUES (%s,'active',0)"
-    cursor.execute(query, (user_id,))
-    db.commit()
+def order_create(user_id: int, customer: CustomerInfo):
+    order_id = create_order(user_id)
+    save_customer_info(customer)
+    return {"message": "Order created", "order_id": order_id}
 
-    order_id = cursor.lastrowid
-
-    return {
-        "message": "Order created",
-        "order_id": order_id
-    }
-
-
-# ADD ITEM TO ORDER
 @app.post("/order/add-item")
-def add_item(order_id: int, item_name: str, quantity: int):
+def order_add_item(order_id: int, item: OrderItem):
+    result = add_item(order_id, item.item_name, item.quantity)
+    return result
 
-    # find item
-    query = "SELECT id,name,price,is_available FROM menu_items WHERE LOWER(name)=LOWER(%s)"
-    cursor.execute(query, (item_name,))
-    item = cursor.fetchone()
-
-    if not item:
-        return {"error": "Item not found on menu"}
-
-    if item["is_available"] == 0:
-        return {"error": "Item currently unavailable"}
-
-    item_total = item["price"] * quantity
-
-    # insert into order_items
-    insert_query = """
-    INSERT INTO order_items (order_id,menu_item_id,item_name,quantity,price)
-    VALUES (%s,%s,%s,%s,%s)
-    """
-
-    cursor.execute(insert_query, (
-        order_id,
-        item["id"],
-        item["name"],
-        quantity,
-        item_total
-    ))
-
-    # update total price
-    update_query = """
-    UPDATE orders
-    SET total_price = total_price + %s
-    WHERE id = %s
-    """
-
-    cursor.execute(update_query, (item_total, order_id))
-    db.commit()
-
-    return {
-        "message": f"{quantity} {item['name']} added",
-        "added_price": item_total
-    }
-
-
-# TRACK ORDER
 @app.get("/order/track/{order_id}")
-def track_order(order_id: int):
+def order_track(order_id: int):
+    order_data = track_order(order_id)
+    customer = get_customer_info(order_id)
+    order_data["customer"] = customer
+    return order_data
 
-    query = "SELECT * FROM orders WHERE id = %s"
-    cursor.execute(query, (order_id,))
-    order = cursor.fetchone()
+# -----------------------------
+# BILL ROUTE
+# -----------------------------
+@app.get("/order/bill/{order_id}")
+def generate_bill(order_id: int):
+    data = track_order(order_id)
+    customer = get_customer_info(order_id)
 
-    if not order:
+    if not data["order"]:
         return {"error": "Order not found"}
 
-    item_query = "SELECT * FROM order_items WHERE order_id = %s"
-    cursor.execute(item_query, (order_id,))
-    items = cursor.fetchall()
+    items = [
+        BillItem(item_name=item["item_name"], quantity=item["quantity"], price=item["price"])
+        for item in data["items"]
+    ]
+    total = sum(item.price for item in items)
 
-    return {
-        "order": order,
-        "items": items
-    }
+    bill = Bill(customer=customer, items=items, total=total)
+    return bill

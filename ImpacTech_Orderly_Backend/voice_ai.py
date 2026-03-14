@@ -6,8 +6,14 @@ load_dotenv()
 
 client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
 
+def process_voice(transcript, menu_list, allergies=None, preferences=None):
+    """
+    allergies/preferences are optional lists to prevent recommending items
+    that the customer can't have.
+    """
 
-def process_voice(transcript, menu_list):
+    allergies = allergies or []
+    preferences = preferences or []
 
     prompt = f"""
 You are an order assistant for Rasoi Royal restaurant.
@@ -16,6 +22,9 @@ Given a voice transcript, extract the intent and item details and return ONLY a 
 
 Menu items available:
 {menu_list}
+
+Customer allergies: {allergies}
+Customer preferences: {preferences}
 
 Return format:
 {{
@@ -41,5 +50,4 @@ Transcript:
     )
 
     result = response.choices[0].message.content
-
     return result
