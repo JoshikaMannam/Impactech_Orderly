@@ -1,4 +1,0 @@
-Flask==2.2.0
-mysql-connector-python==8.0.33
-Flask-Dance==5.1.1
-
